@@ -3,3 +3,4 @@ db.sqlite3
 venv/
 data/questrade.yaml
 data/wsimple.yaml
+**/__pycache__/
