@@ -1,13 +1,28 @@
 from __future__ import annotations
 from datetime import datetime
 from typing import Optional, List
-from pydantic import BaseModel, UUID4, Field, field_validator, ConfigDict
+from pydantic import BaseModel, UUID4, Field, field_validator, ConfigDict, EmailStr
 from enum import Enum
 
 
 # ---------------------------
 # Shared Schemas
 # ---------------------------
+
+
+class MFACode(BaseModel):
+    code: str
+
+
+class Token(BaseModel):
+    code: str
+
+
+class SyncResponse(BaseModel):
+    count: int
+    message: Optional[str] = None
+
+
 class CurrencyCode(str, Enum):
     CAD = "CAD"
     USD = "USD"
@@ -37,6 +52,25 @@ class BrokerResponse(BrokerBase):
     id: UUID4
     created_at: datetime
     model_config = ConfigDict(from_attributes=True)
+
+
+# Base schema with common attributes
+class UserBase(BaseModel):
+    email: EmailStr
+    is_active: bool = True
+    role: Optional[str] = "user"
+
+
+# Schema for creating a new user (password required)
+class UserCreate(UserBase):
+    password: str
+
+
+class UserResponse(BaseModel):
+    id: int
+    email: EmailStr
+    is_active: bool
+    role: str
 
 
 # ---------------------------
@@ -167,6 +201,18 @@ class ActivityResponse(ActivityBase):
     model_config = ConfigDict(from_attributes=True)
 
 
+class ActivityUpdate(BaseModel):
+    status: Optional[str] = None
+    cancelled_at: Optional[datetime] = None
+    rejected_at: Optional[datetime] = None
+    filled_at: Optional[datetime] = None
+    price: Optional[float] = None
+    quantity: Optional[int] = None
+    amount: Optional[float] = None
+    commission: Optional[float] = None
+    market_currency: Optional[str] = None
+
+
 # ---------------------------
 # Deposit Schemas
 # ---------------------------
@@ -212,3 +258,136 @@ class SecurityGroupResponse(SecurityGroupBase):
 # Resolve forward references at module level
 AccountResponse.model_rebuild()
 SecurityResponse.model_rebuild()
+
+
+from pydantic import BaseModel, UUID4, condecimal
+from typing import Optional, List
+from datetime import datetime
+
+
+# ✅ User Response Model
+class UserResponse(BaseModel):
+    id: int
+    email: str
+    is_active: bool
+    role: str
+
+    class Config:
+        from_attributes = True
+
+
+# ✅ Account Response Model
+class AccountResponse(BaseModel):
+    account_number: str
+    type: str
+    current_balance: condecimal(max_digits=20, decimal_places=2)
+    net_deposits: condecimal(max_digits=20, decimal_places=2)
+    currency: str
+    status: str
+    is_primary: bool
+    created_at: datetime
+    updated_at: datetime
+    last_synced: datetime
+    linked_account_id: Optional[str]
+    account_broker_id: Optional[str]
+
+    class Config:
+        from_attributes = True
+
+
+# ✅ Deposit Response Model
+class DepositResponse(BaseModel):
+    id: str
+    bank_account_id: Optional[str]
+    status: Optional[str]
+    currency: Optional[str]
+    amount: condecimal(max_digits=10, decimal_places=2)
+    cancelled_at: Optional[datetime]
+    rejected_at: Optional[datetime]
+    accepted_at: Optional[datetime]
+    created_at: datetime
+    last_synced: Optional[datetime]
+    account_id: Optional[str]
+
+    class Config:
+        from_attributes = True
+
+
+# ✅ Activity Response Model
+class ActivityResponse(BaseModel):
+    id: str
+    currency: Optional[str]
+    type: str
+    sub_type: Optional[str]
+    action: Optional[str]
+    stop_price: Optional[condecimal(max_digits=10, decimal_places=2)]
+    price: condecimal(max_digits=10, decimal_places=2)
+    quantity: condecimal(max_digits=10, decimal_places=2)
+    amount: Optional[condecimal(max_digits=10, decimal_places=2)]
+    commission: condecimal(max_digits=10, decimal_places=2)
+    option_multiplier: Optional[str]
+    symbol: Optional[str]
+    market_currency: Optional[str]
+    status: Optional[str]
+    cancelled_at: Optional[datetime]
+    rejected_at: Optional[datetime]
+    submitted_at: Optional[datetime]
+    filled_at: Optional[datetime]
+    created_at: datetime
+    last_updated: datetime
+    last_synced: datetime
+    security_id: Optional[str]
+    account_id: str
+
+    class Config:
+        from_attributes = True
+
+
+# ✅ Position Response Model
+class PositionResponse(BaseModel):
+    id: UUID4
+    quantity: condecimal(max_digits=20, decimal_places=2)
+    amount: condecimal(max_digits=20, decimal_places=2)
+    is_active: bool
+    created_at: datetime
+    updated_at: datetime
+    security_id: Optional[str]
+    account_id: Optional[str]
+
+    class Config:
+        from_attributes = True
+
+
+# ✅ Broker Response Model
+class BrokerResponse(BaseModel):
+    id: UUID4
+    name: str
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+# ✅ Security Response Model
+class SecurityResponse(BaseModel):
+    id: str
+    symbol: str
+    name: Optional[str]
+    description: Optional[str]
+    type: Optional[str]
+    currency: Optional[str]
+    status: Optional[str]
+    exchange: Optional[str]
+    option_details: Optional[str]
+    order_subtypes: Optional[str]
+    trade_eligible: bool
+    options_eligible: bool
+    buyable: bool
+    sellable: bool
+    active_date: Optional[datetime]
+    created_at: datetime
+    last_synced: datetime
+    security_id: Optional[str]
+
+    class Config:
+        from_attributes = True

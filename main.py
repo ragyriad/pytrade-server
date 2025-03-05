@@ -1,8 +1,9 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+
 from contextlib import asynccontextmanager
-from app.database.connection import engine, Base
-from app.routers import router
+from database.connection import engine, Base
+from routes import router
 
 
 @asynccontextmanager
@@ -14,8 +15,8 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(
-    title="Investment Sync API",
-    description="API for managing investment accounts and activities",
+    title="Pytrade API",
+    description="API for investment platform",
     version="1.0.0",
     lifespan=lifespan,
 )
@@ -36,7 +37,7 @@ app.include_router(router, prefix="/api")
 # Health Check
 @app.get("/", include_in_schema=False)
 async def root():
-    return {"message": "Investment Sync API Operational"}
+    return {"message": "Pytrade API Operational"}
 
 
 @app.get("/healthcheck", tags=["system"])
@@ -48,4 +49,4 @@ async def healthcheck():
 if __name__ == "__main__":
     import uvicorn
 
-    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
+    uvicorn.run("main:app", host="0.0.0.0", port=3000, reload=True)

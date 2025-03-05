@@ -1,13 +1,17 @@
+from pydantic_settings import BaseSettings
 from dotenv import load_dotenv
-import os
 
-load_dotenv()
+load_dotenv(override=True)
 
-DATABASE_URL = os.getenv("DATABASE_URL")
-SECRET_KEY = os.getenv("SECRET_KEY")
-QUESTRADE_SERVER = os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES")
-WSIMPLE_EMAIL = os.getenv("WSIMPLE_EMAIL")
-WSIMPLE_PASSWORD = os.getenv("WSIMPLE_PASSWORD")
-QUESTRADE_REFRESH_TOKEN = os.getenv("QUESTRADE_REFRESH_TOKEN")
-WSIMPLE_REFRESH_TOKEN = os.getenv("WSIMPLE_REFRESH_TOKEN")
-QUESTRADE_ACCESS_TOKEN = os.getenv("QUESTRADE_ACCESS_TOKEN")
+
+class Settings(BaseSettings):
+    DATABASE_URL: str
+    QUESTRADE_ACCESS_TOKEN: str
+    QUESTRADE_SERVER: str
+    QUESTRADE_REFRESH_TOKEN: str
+    WSIMPLE_EMAIL: str
+    WSIMPLE_PASSWORD: str
+    WSIMPLE_REFRESH_TOKEN: str
+
+
+settings = Settings()

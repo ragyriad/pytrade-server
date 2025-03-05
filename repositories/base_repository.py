@@ -1,9 +1,10 @@
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import Session
-import traceback
 from sqlalchemy.future import select
-from typing import Type, TypeVar, Generic
+from sqlalchemy.dialects.postgresql import insert
+from sqlalchemy import update as sa_update
+import traceback
+from typing import Type, TypeVar, Generic, List, Optional
 from database.models import Base
 
 T = TypeVar("T", bound=Base)
@@ -14,51 +15,48 @@ class BaseRepository(Generic[T]):
         self.session = session
         self.model = model
 
-    async def get_all(self):
+    def get_all(self) -> List[T]:
         query = select(self.model)
-        result = await self.session.execute(query)
+        result = self.session.execute(query)
         return result.scalars().all()
 
-    async def get_by_id(self, entity_id: int):
+    async def get_by_id(self, entity_id: int) -> Optional[T]:
         return await self.session.get(self.model, entity_id)
 
-    async def create(self, entity_data: dict):
+    async def create(self, entity_data: dict) -> T:
         entity = self.model(**entity_data)
-        self.session.add(entity)
-        await self.session.commit()
+        async with self.session.begin():  # Ensures rollback on failure
+            self.session.add(entity)
+        await self.session.refresh(entity)
         return entity
 
-    async def delete(self, entity_id: int):
+    async def update(self, entity_id: int, update_data: dict) -> Optional[T]:
+        async with self.session.begin():
+            stmt = (
+                sa_update(self.model)
+                .where(self.model.id == entity_id)
+                .values(**update_data)
+                .returning(self.model)
+            )
+            result = await self.session.execute(stmt)
+            updated_entity = result.scalar_one_or_none()
+        return updated_entity
+
+    async def delete(self, entity_id: int) -> bool:
         entity = await self.get_by_id(entity_id)
         if entity:
-            await self.session.delete(entity)
-            await self.session.commit()
+            async with self.session.begin():
+                await self.session.delete(entity)
             return True
         return False
 
-    def safe_bulk_create(
-        db: Session, Model, data: list, unique_fields=None, update_fields=None
-    ):
-        created_records = []
+    async def safe_bulk_create(self, data: List[dict]) -> List[dict]:
         try:
-            if unique_fields and update_fields:
-                for obj in data:
-                    db.merge(obj)  # Merge to handle duplicates
-                db.commit()
-            else:
-                db.add_all(data)
-                db.commit()
-            created_records = data
+            async with self.session.begin():
+                stmt = insert(self.model).values(data).on_conflict_do_nothing()
+                await self.session.execute(stmt)
         except IntegrityError:
-            db.rollback()
+            await self.session.rollback()
             print(traceback.format_exc())
-            for obj in data:
-                try:
-                    db.add(obj)
-                    db.commit()
-                    created_records.append(obj)
-                except IntegrityError as integrity_err:
-                    db.rollback()
-                    print(integrity_err)
-                    continue
-        return created_records
+            return []
+        return data

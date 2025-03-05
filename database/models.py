@@ -1,4 +1,4 @@
-from sqlalchemy import Column, String, ForeignKey, Boolean, DECIMAL, DateTime
+from sqlalchemy import Column, String, ForeignKey, Boolean, DECIMAL, DateTime, Integer
 from sqlalchemy.orm import relationship
 from database.connection import Base
 from datetime import datetime, timezone
@@ -7,6 +7,16 @@ import uuid
 
 def utc_now():
     return datetime.now(timezone.utc)
+
+
+class User(Base):
+    __tablename__ = "users"
+
+    id = Column(Integer, primary_key=True, index=True)
+    email = Column(String, unique=True, nullable=False, index=True)
+    hashed_password = Column(String, nullable=False)
+    is_active = Column(Boolean, default=True)
+    role = Column(String, default="user")
 
 
 class Account(Base):
@@ -30,6 +40,7 @@ class Account(Base):
 
     linked_account = relationship("Account", remote_side=[account_number])
     account_broker = relationship("Broker")
+    activities = relationship("Activity", backref="Account")
 
 
 class Deposit(Base):
@@ -48,6 +59,43 @@ class Deposit(Base):
     last_synced = Column(DateTime(timezone=True))
 
     account_id = Column(String, ForeignKey("accounts.account_number"))
+
+
+class Activity(Base):
+    __tablename__ = "activities"
+
+    id = Column(String(255), primary_key=True, nullable=False)
+    currency = Column(String(30), nullable=True)
+    type = Column(String(30), nullable=False)
+    sub_type = Column(String(30), nullable=True)
+    action = Column(String(30), nullable=True)
+
+    stop_price = Column(DECIMAL(10, 2), nullable=True, default=0)
+    price = Column(DECIMAL(10, 2), nullable=False, default=0)
+    quantity = Column(DECIMAL(10, 2), nullable=False, default=0)
+    amount = Column(DECIMAL(10, 2), nullable=True, default=0)
+    commission = Column(DECIMAL(10, 2), nullable=False, default=0)
+    option_multiplier = Column(String(255), nullable=True)
+
+    symbol = Column(String(255), nullable=True)
+    market_currency = Column(String(20), nullable=True)
+    status = Column(String(20), nullable=True)
+
+    cancelled_at = Column(DateTime, nullable=True)
+    rejected_at = Column(DateTime, nullable=True)
+    submitted_at = Column(DateTime, nullable=True)
+    filled_at = Column(DateTime, nullable=True)
+
+    created_at = Column(DateTime, default=utc_now, nullable=False)
+    last_updated = Column(DateTime, default=utc_now, onupdate=utc_now)
+    last_synced = Column(DateTime, default=utc_now)
+
+    security_id = Column(String(255), ForeignKey("securities.id"), nullable=True)
+    security = relationship("Security", back_populates="securities")
+
+    account_id = Column(
+        String(255), ForeignKey("accounts.account_number"), nullable=False
+    )
 
 
 class Position(Base):
@@ -76,36 +124,6 @@ class Broker(Base):
     created_at = Column(DateTime(timezone=True), default=utc_now)
 
 
-class Activity(Base):
-    __tablename__ = "activities"
-
-    id = Column(String(255), primary_key=True)
-    currency = Column(String(30))
-    type = Column(String(30), nullable=False)
-    sub_type = Column(String(30))
-    action = Column(String(30))
-    stop_price = Column(DECIMAL(10, 2), default=0)
-    price = Column(DECIMAL(10, 2), default=0)
-    quantity = Column(DECIMAL(10, 2), default=0)
-    amount = Column(DECIMAL(10, 2), default=0)
-    commission = Column(DECIMAL(10, 2), default=0)
-
-    symbol = Column(String(255))
-    market_currency = Column(String(20))
-    status = Column(String(20))
-
-    cancelled_at = Column(DateTime(timezone=True))
-    rejected_at = Column(DateTime(timezone=True))
-    submitted_at = Column(DateTime(timezone=True))
-    filled_at = Column(DateTime(timezone=True))
-    created_at = Column(DateTime(timezone=True), default=utc_now)
-    last_updated = Column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)
-    last_synced = Column(DateTime(timezone=True), default=utc_now)
-
-    security_id = Column(String, ForeignKey("securities.id"), nullable=True)
-    account_id = Column(String, ForeignKey("accounts.account_number"), nullable=False)
-
-
 class Security(Base):
     __tablename__ = "securities"
 
@@ -128,3 +146,4 @@ class Security(Base):
     active_date = Column(DateTime(timezone=True))
     created_at = Column(DateTime(timezone=True), default=utc_now)
     last_synced = Column(DateTime(timezone=True), default=utc_now)
+    activities = relationship("Activity", backref="activities")

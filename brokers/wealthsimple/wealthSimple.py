@@ -5,7 +5,6 @@ from typing import Optional, Union
 from urllib.error import HTTPError
 
 from .tokens import TokensBox
-from .redis_cache import set_instance_cache
 from .wsimple_requestor import requestor
 from errors import InvalidRefreshTokenError, LoginError, WSOTPError
 from .endpoints import Endpoints
@@ -128,7 +127,6 @@ class wealthSimple:
                         {"refresh_token": self.refresh_token},
                     ]
                 self.data = final_request.json()
-                set_instance_cache(self.box.access_token, self, self.box.access_expires)
                 del final_request
                 return self
             else:
@@ -190,9 +188,6 @@ class wealthSimple:
                     self.box = self.refresh_token(tokens=self.box.tokens)
                     print("Refreshed Tokens")
                     print(self.box)
-                    set_instance_cache(
-                        self.box.access_token, self, self.box.access_expires
-                    )
                 return f(self, *args, **kwargs)
             else:
                 return f(self, *args, **kwargs)

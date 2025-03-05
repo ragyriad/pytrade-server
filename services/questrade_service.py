@@ -4,21 +4,13 @@ import traceback
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
-
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import JSONResponse
-from questrade_api import Questrade
 from sqlalchemy.orm import Session
 
 from database.models import Account, Activity, Security
 from repositories.base_repository import BaseRepository
 from database.session import get_db
-from utils.utils import (
-    open_file,
-    write_file,
-    format_file_name,
-)
-from repositories.base_repository import safe_bulk_create
 
 from data.constants import (
     SECURITY_UPDATE_FIELDS,
@@ -31,17 +23,13 @@ from database.schemas import AccountResponse, ActivityResponse
 
 router = APIRouter()
 base_path = Path(__file__).parent
-file_path = (base_path / "info/questrade.yaml").resolve()
+file_path = (base_path / "brokers/questrade.yaml").resolve()
+
+from utils.utils import open_file, write_file
+from questrade_api import Questrade
 
 
-def get_activity_action(activity):
-    if activity["type"] == "Trades":
-        value = float(activity["netAmount"])
-        return "Sell" if value > 0 else "Buy" if value < 0 else None
-
-
-def authenticate():
-    """Handles Questrade authentication and token management."""
+def auth():
     print("Authenticating Questrade")
     file_content = open_file(file_path)
 
@@ -66,9 +54,14 @@ def authenticate():
     return quest_object
 
 
-def sync_questrade_accounts(db: Session = Depends(get_db)):
-    """Fetch and sync Questrade accounts."""
-    questrade = authenticate()
+def get_activity_action(activity):
+    if activity["type"] == "Trades":
+        value = float(activity["netAmount"])
+        return "Sell" if value > 0 else "Buy" if value < 0 else None
+
+
+def sync_accounts(db: Session = Depends(get_db)):
+    questrade = auth()
 
     try:
         accounts = questrade.accounts["accounts"]
@@ -94,10 +87,10 @@ def sync_questrade_accounts(db: Session = Depends(get_db)):
         raise HTTPException(status_code=400, detail=str(e))
 
 
-def sync_questrade_activities(db: Session = Depends(get_db)):
-
+def sync_activities(db: Session = Depends(get_db)):
+    """Fetch and sync Questrade activities."""
     try:
-        questrade = authenticate()
+        questrade = auth()
         fetched_accounts = (
             db.query(Account)
             .filter(Account.account_number.in_(["51978003", "51983522"]))
@@ -182,7 +175,7 @@ def sync_questrade_activities(db: Session = Depends(get_db)):
                         )
         security_repo = BaseRepository(db, Security)
         activity_repo = BaseRepository(db, Activity)
-
+        # Bulk insert securities and activities
         security_repo.safe_bulk_create(
             db,
             Security,
@@ -201,6 +194,21 @@ def sync_questrade_activities(db: Session = Depends(get_db)):
         return {
             "security_count": len(securities_to_save),
             "activity_count": len(activities_to_save),
+        }
+
+    except Exception as e:
+        print(traceback.format_exc())
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+def sync_with_questrade(db: Session = Depends(get_db)):
+    try:
+        account_sync_result = sync_accounts(db)
+        activity_sync_result = sync_activities(db)
+
+        return {
+            "accounts_synced": account_sync_result["count"],
+            "activities_synced": activity_sync_result["activity_count"],
         }
 
     except Exception as e:

@@ -1,0 +1,4 @@
+{"scripts": {
+  "start": "uvicorn main:app --reload"
+}
+}
