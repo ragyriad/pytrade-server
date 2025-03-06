@@ -29,12 +29,12 @@ class CurrencyCode(str, Enum):
     EUR = "EUR"
 
 
-class AccountType(str, Enum):
-    TFSA = "TFSA"
-    RRSP = "RRSP"
-    PERSONAL = "PERSONAL"
-    CRYPTO = "CRYPTO"
-    NON_REGISTERED = "NON_REGISTERED"
+# class AccountType(str, Enum):
+#     TFSA = "TFSA"
+#     RRSP = "RRSP"
+#     PERSONAL = "PERSONAL"
+#     CRYPTO = "CRYPTO"AccountType
+#     NON_REGISTERED = "NON_REGISTERED"
 
 
 # ---------------------------
@@ -77,7 +77,7 @@ class UserResponse(BaseModel):
 # Account Schemas
 # ---------------------------
 class AccountBase(BaseModel):
-    type: AccountType
+    type: str
     currency: CurrencyCode
     status: str = Field(..., example="ACTIVE")
     is_primary: bool = False
@@ -102,8 +102,8 @@ class AccountUpdate(AccountBase):
 
 class AccountResponse(AccountBase):
     account_number: str
-    linked_account: Optional[AccountResponse] = None  # Self reference
-    account_broker: Optional[BrokerResponse] = None
+    linked_account_id: Optional[AccountResponse] = None
+    account_broker_id: Optional[BrokerResponse] = None
     created_at: datetime
     updated_at: datetime
     last_synced: datetime
@@ -295,7 +295,6 @@ class AccountResponse(BaseModel):
         from_attributes = True
 
 
-# ✅ Deposit Response Model
 class DepositResponse(BaseModel):
     id: str
     bank_account_id: Optional[str]
@@ -313,7 +312,6 @@ class DepositResponse(BaseModel):
         from_attributes = True
 
 
-# ✅ Activity Response Model
 class ActivityResponse(BaseModel):
     id: str
     currency: Optional[str]
@@ -343,7 +341,6 @@ class ActivityResponse(BaseModel):
         from_attributes = True
 
 
-# ✅ Position Response Model
 class PositionResponse(BaseModel):
     id: UUID4
     quantity: condecimal(max_digits=20, decimal_places=2)

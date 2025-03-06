@@ -34,16 +34,26 @@ class AccountService:
         return len(activities)
 
     async def refresh_activities(self, source_id: str) -> List[ActivityResponse]:
-        new_activities = await self.activity_repo.regenerate_from_source(source_id)
+        new_activities = await self.activity_repo.regenerate_from_source(
+            source_id
+        ).__dict__
         return [ActivityResponse.model_validate(a) for a in new_activities]
 
     async def get_all_accounts(self, db) -> List[AccountBase]:
         accounts = await self.account_repo.get_all_accounts(db)
-        return [AccountBase.model_validate(account) for account in accounts]
+        print(accounts.__dict__)
+        return [
+            AccountBase.model_validate(account, from_attributes=True)
+            for account in accounts
+        ]
 
     async def get_account_by_id(self, account_id: int) -> Optional[AccountBase]:
         account = await self.account_repo.get_by_id(account_id)
-        return AccountBase.model_validate(account) if account else None
+        return (
+            AccountBase.model_validate(account, from_attributes=True)
+            if account
+            else None
+        )
 
     async def create_account(self, account_data: AccountBase) -> AccountBase:
         new_account = await self.account_repo.create(account_data.dict())

@@ -3,7 +3,6 @@ from fastapi import APIRouter, Depends, HTTPException
 from fastapi import HTTPException, Depends, APIRouter
 
 from database.schemas import ActivityResponse, AccountResponse
-from database.models import Account
 from database.session import get_db
 
 from services.account_service import AccountService

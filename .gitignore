@@ -4,3 +4,4 @@ venv/
 **/__pycache__/
 brokers/wsimple.yaml
 brokers/questrade.yaml
+/*.sql

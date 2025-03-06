@@ -20,7 +20,7 @@ class User(Base):
 
 
 class Account(Base):
-    __tablename__ = "accounts"
+    __tablename__ = "account"
 
     account_number = Column(String(20), primary_key=True)
     type = Column(String(20), nullable=False)
@@ -34,13 +34,13 @@ class Account(Base):
     last_synced = Column(DateTime(timezone=True), default=utc_now)
 
     linked_account_id = Column(
-        String(20), ForeignKey("accounts.account_number"), nullable=True
+        String(20), ForeignKey("account.account_number"), nullable=True
     )
     account_broker_id = Column(String(20), ForeignKey("brokers.name"), nullable=True)
 
     linked_account = relationship("Account", remote_side=[account_number])
     account_broker = relationship("Broker")
-    activities = relationship("Activity", backref="Account")
+    activities = relationship("Activity", backref="account")
 
 
 class Deposit(Base):
@@ -90,11 +90,13 @@ class Activity(Base):
     last_updated = Column(DateTime, default=utc_now, onupdate=utc_now)
     last_synced = Column(DateTime, default=utc_now)
 
+    # ✅ Each Activity has a single Security
     security_id = Column(String(255), ForeignKey("securities.id"), nullable=True)
-    security = relationship("Security", back_populates="securities")
+    security = relationship("Security", backref="activities")
 
+    # ✅ Each Activity belongs to a single Account
     account_id = Column(
-        String(255), ForeignKey("accounts.account_number"), nullable=False
+        String(255), ForeignKey("account.account_number"), nullable=False
     )
 
 
@@ -110,7 +112,7 @@ class Position(Base):
     updated_at = Column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)
 
     security_id = Column(String, ForeignKey("securities.id"))
-    account_id = Column(String, ForeignKey("accounts.account_number"))
+    account_id = Column(String, ForeignKey("account.account_number"))
 
     security = relationship("Security")
     account = relationship("Account")
@@ -146,4 +148,3 @@ class Security(Base):
     active_date = Column(DateTime(timezone=True))
     created_at = Column(DateTime(timezone=True), default=utc_now)
     last_synced = Column(DateTime(timezone=True), default=utc_now)
-    activities = relationship("Activity", backref="activities")
