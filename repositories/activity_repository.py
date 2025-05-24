@@ -1,8 +1,7 @@
-# app/repositories/activity_repository.py
 from sqlalchemy import select, update, delete
 from sqlalchemy.ext.asyncio import AsyncSession
 from database.models import Activity
-from database.schemas import ActivityCreate, ActivityUpdate
+from schemas.schemas import ActivityCreate, ActivityUpdate
 from typing import Optional, List
 
 
@@ -10,7 +9,11 @@ class ActivityRepository:
     def __init__(self, session: AsyncSession):
         self.session = session
 
-    async def get(self, activity_id: str) -> Optional[Activity]:
+    async def get_all(self) -> List[Activity]:
+        result = await self.session.execute(select(Activity))
+        return result.scalars().all()
+
+    async def get_by_id(self, activity_id: str) -> Optional[Activity]:
         result = await self.session.execute(
             select(Activity).where(Activity.id == activity_id)
         )

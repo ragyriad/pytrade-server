@@ -10,7 +10,7 @@ from errors import InvalidRefreshTokenError, LoginError, WSOTPError
 from .endpoints import Endpoints
 
 
-class wealthSimple:
+class wealthsimpleAPI:
     BASE_URL = Endpoints.BASE.value
     BASE_PUBLIC_URL = Endpoints.BASE_PUBLIC.value
     BASE_STATUS_URL = Endpoints.BASE_STATUS.value
@@ -27,10 +27,13 @@ class wealthSimple:
         internally_manage_tokens: bool = True,
         two_factor_callback: callable = None,
     ):
-
-        self.oauth_mode = oauth_mode
-        self.internally_manage_tokens = internally_manage_tokens
         self.email = email
+        self.password = password
+        self.mfa_code = mfa_code
+        self.oauth_mode = oauth_mode
+        self.tokens = tokens
+        self.internally_manage_tokens = internally_manage_tokens
+        self.two_factor_callback = two_factor_callback
         self.logger = logger
         self.session = self.session = cloudscraper.create_scraper()
 
@@ -49,6 +52,21 @@ class wealthSimple:
             two_factor_callback,
         )
         return None
+
+    def serialize(self) -> dict:
+
+        print("serializing wealthsimpleAPI")
+        return {
+            "email": self.email,
+            "password": self.password,
+            "mfa_code": self.mfa_code,
+            "oauth_mode": self.oauth_mode,
+            "tokens": self.tokens,
+            "internally_manage_tokens": self.internally_manage_tokens,
+            "two_factor_callback": (
+                self.two_factor_callback.__name__ if self.two_factor_callback else None
+            ),
+        }
 
     def wsimple_login(
         self,
@@ -72,8 +90,9 @@ class wealthSimple:
         print(
             f"Pre-login: {initial_request.status_code}/ {str(initial_request.content)}"
         )
-        print("is OTP Required")
-        print("x-wealthsimple-otp-required" in initial_request.headers)
+        print(
+            "is OTP Required", "x-wealthsimple-otp-required" in initial_request.headers
+        )
         if "x-wealthsimple-otp-required" in initial_request.headers:
             self.device_id = initial_request.headers["x-ws-device-id"]
             otp_headers = (
@@ -86,52 +105,56 @@ class wealthSimple:
                 "required": (otp_headers[0]),
                 "method": otp_headers[1][7:],
             }
-            if mfa_code is None:
-                raise WSOTPError()
 
+            if mfa_code is None:
+                payload["otp"] = two_factor_callback()
+                self.mfa_code = payload["otp"]
             elif method == "sms":
                 self._otp_info["digits"] = otp_headers[2][7:]
             print(f"EndPoint Requestor {Endpoints.LOGIN}")
             print("weathSimple payload")
             print(payload)
-            payload["otp"] = mfa_code
-            final_request = requestor(
-                Endpoints.LOGIN,
-                args={"base": self.BASE_URL},
-                login_refresh=True,
-                session=self.session,
-                json=payload,
-                logger=self.logger,
-            )
-            del payload
-            #! natural code login\
-            if final_request.status_code == 200:
-                if self.internally_manage_tokens:
-                    self.session.headers["Authorization"] = (
-                        f"Bearer {final_request.headers['X-Access-Token']}"
-                    )
-                    self.box = TokensBox(
-                        final_request.headers["X-Access-Token"],
-                        final_request.headers["X-Refresh-Token"],
-                        datetime.fromtimestamp(
-                            int(final_request.headers["X-Access-Token-Expires"])
-                        ),
-                    )
+            if payload["otp"] is None:
+                raise WSOTPError
+            else:
+                final_request = requestor(
+                    Endpoints.LOGIN,
+                    args={"base": self.BASE_URL},
+                    login_refresh=True,
+                    session=self.session,
+                    json=payload,
+                    logger=self.logger,
+                )
+                print("FINAL REQUEST \n", final_request.headers)
+                del payload
+                #! natural code login\
+                if final_request.status_code == 200:
+                    if self.internally_manage_tokens:
+                        self.session.headers["Authorization"] = (
+                            f"Bearer {final_request.headers['X-Access-Token']}"
+                        )
+                        self.box = TokensBox(
+                            final_request.headers["X-Access-Token"],
+                            final_request.headers["X-Refresh-Token"],
+                            datetime.fromtimestamp(
+                                int(final_request.headers["X-Access-Token-Expires"])
+                            ),
+                        )
 
+                        return self
+                    else:
+                        self.access_token = final_request.headers["X-Access-Token"]
+                        self.refresh_token = final_request.headers["X-Refresh-Token"]
+                        self.tokens = [
+                            {"Authorization": self.access_token},
+                            {"refresh_token": self.refresh_token},
+                        ]
+                    self.data = final_request.json()
+                    del final_request
                     return self
                 else:
-                    self.access_token = final_request.headers["X-Access-Token"]
-                    self.refresh_token = final_request.headers["X-Refresh-Token"]
-                    self.tokens = [
-                        {"Authorization": self.access_token},
-                        {"refresh_token": self.refresh_token},
-                    ]
-                self.data = final_request.json()
-                del final_request
-                return self
-            else:
-                print(final_request.json())
-                raise LoginError
+                    print(final_request.json())
+                    raise LoginError
         elif initial_request.status_code == 200:
             return self
         else:

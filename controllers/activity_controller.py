@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 from database.session import get_db
 from database.models import Activity
-from database.schemas import ActivityResponse
+from schemas.schemas import ActivityResponse
 from sqlalchemy.future import select
 
 router = APIRouter()

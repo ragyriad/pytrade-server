@@ -49,9 +49,8 @@ def requestor(
         session.mount("http://", adapter)
         name: str = endpoint.name
         url: str = endpoint.value.route.format(**args)
-        print("{} requestor called".format(name))
-        # Add the Authorization header if auth_token is provided
-        print("Kwargs Requestor Before Call")
+        print("Requestor Call")
+        print(url)
         print(kwargs)
         r = session.request(method=endpoint.value[1], url=url, **kwargs)
         if login_refresh:

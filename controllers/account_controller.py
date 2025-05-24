@@ -2,7 +2,7 @@ from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi import HTTPException, Depends, APIRouter
 
-from database.schemas import ActivityResponse, AccountResponse
+from schemas.schemas import ActivityResponse, AccountResponse
 from database.session import get_db
 
 from services.account_service import AccountService
@@ -37,7 +37,7 @@ async def get_account_commissions(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.get("/trades/count", response_model=int)
+@router.get("/{account_id}/trades_count", response_model=int)
 async def get_account_trades_count(
     service: AccountService = Depends(get_account_service),
 ):
@@ -47,11 +47,11 @@ async def get_account_trades_count(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.get("/", response_model=List[AccountResponse])
+@router.get("/get_all", response_model=List[AccountResponse])
 async def get_accounts(db: Session = Depends(get_db)):
     return await account_service.get_all_accounts(db)
 
 
 @router.get("/{account_id}", response_model=AccountResponse)
-async def get_account_by_id(account_id: int, db: Session = Depends(get_db)):
+async def get_account_by_id(account_id: str, db: Session = Depends(get_db)):
     return await account_service.get_account_by_id(db, account_id)

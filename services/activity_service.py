@@ -1,6 +1,8 @@
+from typing import List, Optional
+from fastapi import Depends
 from ..data.constants import WSIMPLE_ACTIVITY_TYPE_DICT
 from database.models import Activity, Security
-from database.schemas import TotalAmountResponse, TradesCountResponse
+from schemas.schemas import TotalAmountResponse, TradesCountResponse, ActivityResponse
 from fastapi import APIRouter
 from sqlalchemy.orm import Session
 from database.connection import get_db
@@ -8,14 +10,24 @@ from database.connection import get_db
 router = APIRouter()
 
 
-def get_activity_action(action_dict: dict):
+async def get_trades_count(self) -> int:
+    activities = await self.activity_repo.find_by_type("Trades")
+    return len(activities)
+
+
+async def refresh_activities(self, source_id: str) -> List[ActivityResponse]:
+    new_activities = await self.activity_repo.regenerate_from_source(source_id).__dict__
+    return [ActivityResponse.model_validate(a) for a in new_activities]
+
+
+async def get_activity_action(action_dict: dict):
     obj, order_type, auto_order_type = action_dict.values()
     if obj == "dividend":
         return "DRIP" if auto_order_type == "dividend_reinvestment" else "Cash Dividend"
     return order_type.split("_")[0].capitalize() if order_type else None
 
 
-def set_activity_amount_value(data: dict):
+async def set_activity_amount_value(data: dict):
     if "filled_net_value" in data:
         return data["filled_net_value"]
     if data["object"] == "dividend":
@@ -23,7 +35,7 @@ def set_activity_amount_value(data: dict):
     return None
 
 
-def set_activity_price(activity: dict):
+async def set_activity_price(activity: dict):
     amount = set_activity_amount_value(activity)
     if activity.get("object") == "order" and amount:
         quantity = activity.get("fill_quantity", activity.get("quantity", 0))
@@ -31,7 +43,7 @@ def set_activity_price(activity: dict):
     return 0
 
 
-def set_activity_currency(activity: dict):
+async def set_activity_currency(activity: dict):
     if currency := activity.get("currency"):
         return currency.upper()
     if activity.get("object") == "order" and "limit_price" in activity:
@@ -43,7 +55,7 @@ def set_activity_currency(activity: dict):
     return "None"
 
 
-def clean_fetch_activities_data(activities):
+async def clean_fetch_activities_data(activities):
     activitiesObjList = []
     securitiesObjList = []
 

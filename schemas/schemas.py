@@ -29,12 +29,12 @@ class CurrencyCode(str, Enum):
     EUR = "EUR"
 
 
-# class AccountType(str, Enum):
-#     TFSA = "TFSA"
-#     RRSP = "RRSP"
-#     PERSONAL = "PERSONAL"
-#     CRYPTO = "CRYPTO"AccountType
-#     NON_REGISTERED = "NON_REGISTERED"
+class AccountType(str, Enum):
+    TFSA = "TFSA"
+    RRSP = "RRSP"
+    PERSONAL = "PERSONAL"
+    CRYPTO = "CRYPTO"
+    NON_REGISTERED = "NON_REGISTERED"
 
 
 # ---------------------------

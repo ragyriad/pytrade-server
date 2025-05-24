@@ -20,7 +20,7 @@ class BaseRepository(Generic[T]):
         result = self.session.execute(query)
         return result.scalars().all()
 
-    async def get_by_id(self, entity_id: int) -> Optional[T]:
+    async def get_by_id(self, entity_id: str) -> Optional[T]:
         return await self.session.get(self.model, entity_id)
 
     async def create(self, entity_data: dict) -> T:

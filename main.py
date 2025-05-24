@@ -1,16 +1,31 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from starlette.exceptions import HTTPException as StarletteHTTPException
+from fastapi.exceptions import RequestValidationError
 
 from contextlib import asynccontextmanager
 from database.connection import engine, Base
+from database.session import get_db
+from utils.db_seed import seed_brokers
 from routes import router
+
+from middlewares import (
+    http_exception_handler,
+    validation_exception_handler,
+    global_exception_handler,
+)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+
+    async with get_db() as session:
+        await seed_brokers(session)
+
     yield
+
     await engine.dispose()
 
 
@@ -21,6 +36,7 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+
 # CORS Configuration
 app.add_middleware(
     CORSMiddleware,
@@ -30,7 +46,11 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Include the router
+app.add_exception_handler(StarletteHTTPException, http_exception_handler)
+app.add_exception_handler(RequestValidationError, validation_exception_handler)
+app.add_exception_handler(Exception, global_exception_handler)
+
+
 app.include_router(router, prefix="/api")
 
 
