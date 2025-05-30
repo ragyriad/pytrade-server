@@ -22,12 +22,18 @@ async def sync_accounts(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.post("/sync-activities")
+@router.get("/sync-activities")
 async def sync_activities(
     db: AsyncSession = Depends(get_db),
     service: QuestradeService = Depends(get_questrade_service),
 ):
-    return await service.sync_activities(db)
+    try:
+        return await service.sync_activities(db)
+    except Exception as e:
+        import traceback
+
+        print(traceback.format_exc())
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.post("/sync-all")

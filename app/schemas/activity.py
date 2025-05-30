@@ -1,12 +1,11 @@
 from __future__ import annotations
 from datetime import datetime
-from typing import Optional, List
-from pydantic import BaseModel, UUID4, Field, ConfigDict, EmailStr
+from typing import Optional
+from decimal import Decimal
+from pydantic import BaseModel
 from enum import Enum
 
-from .shared import CurrencyCode
-from .account import AccountResponse
-from .security import SecurityResponse
+from .shared import CurrencyCode, UTCBase
 
 
 class TotalAmountResponse(BaseModel):
@@ -18,41 +17,55 @@ class TradesCountResponse(BaseModel):
 
 
 class ActivityType(str, Enum):
-    TRADE = "TRADE"
-    DIVIDEND = "DIVIDEND"
-    TRANSFER = "TRANSFER"
-    DEPOSIT = "DEPOSIT"
+    CONVERT_FUNDS = "Convert Funds"
+    DIVIDEND = "Dividend"
+    ORDER = "Order"
+    DEPOSIT = "Deposit"
+    CORPORATE_ACTION = "Corporate Action"
+    FEES_AND_REBATES = "Fees and Rebates"
+    OPTION = "Option"
+    OTHER = "Other"
+    NONE = None
 
 
-class ActivityBase(BaseModel):
-    type: ActivityType
-    currency: CurrencyCode
-    amount: float = Field(..., gt=0)
-    quantity: float = Field(..., gt=0)
-    status: str = Field(..., example="FILLED")
+class ActivityBase(UTCBase):
+    type: Optional[str] = None
+    currency: Optional[CurrencyCode]
+    amount: Optional[Decimal] = 0.0
+    quantity: Decimal
+    status: Optional[str]
+    sub_type: Optional[str] = None
+    action: Optional[str] = None
+    stop_price: Optional[Decimal] = None
+    price: Decimal
+    commission: Decimal
+    option_multiplier: Optional[str] = None
+    symbol: Optional[str] = None
+    market_currency: Optional[str] = None
 
 
 class ActivityCreate(ActivityBase):
+    id: Optional[str] = None
+    submitted_at: Optional[datetime] = None
+    filled_at: Optional[datetime] = None
     security_id: Optional[str] = None
-    account_number: str
+    account_id: str
 
 
-class ActivityResponse(ActivityBase):
-    id: str
-    security: Optional[SecurityResponse] = None
-    account: AccountResponse
+class ActivityUpdate(UTCBase):
+    status: Optional[str]
+    cancelled_at: Optional[datetime]
+    rejected_at: Optional[datetime]
+    submitted_at: Optional[datetime]
+    filled_at: Optional[datetime]
+    price: Optional[Decimal]
+    quantity: Optional[Decimal]
+    amount: Optional[Decimal]
+    commission: Optional[Decimal]
+    stop_price: Optional[Decimal]
+
+
+class ActivityResponse(ActivityCreate):
     created_at: datetime
     last_updated: datetime
-    model_config = ConfigDict(from_attributes=True)
-
-
-class ActivityUpdate(BaseModel):
-    status: Optional[str] = None
-    cancelled_at: Optional[datetime] = None
-    rejected_at: Optional[datetime] = None
-    filled_at: Optional[datetime] = None
-    price: Optional[float] = None
-    quantity: Optional[int] = None
-    amount: Optional[float] = None
-    commission: Optional[float] = None
-    market_currency: Optional[str] = None
+    last_synced: datetime

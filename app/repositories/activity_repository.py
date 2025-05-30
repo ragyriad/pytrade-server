@@ -1,14 +1,18 @@
 from sqlalchemy import select, update, delete
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.exc import SQLAlchemyError
 from typing import Optional, List
+from datetime import datetime, timezone
+from sqlalchemy.dialects.postgresql import insert
+import sqlalchemy as sa
 
 from app.database.models import Activity
-from app.schemas.schemas import ActivityCreate, ActivityUpdate
+from app.schemas.activity import ActivityCreate, ActivityUpdate
 
 
 class ActivityRepository:
-    def __init__(self, session: AsyncSession):
-        self.session = session
+    def __init__(self, logger=None):
+        self.logger = logger
 
     async def get_all(self) -> List[Activity]:
         result = await self.session.execute(select(Activity))
@@ -39,11 +43,46 @@ class ActivityRepository:
         await self.session.refresh(db_activity)
         return db_activity
 
-    async def bulk_save(self, activities: List[ActivityCreate]) -> List[Activity]:
-        db_activities = [Activity(**activity.dict()) for activity in activities]
-        self.session.add_all(db_activities)
-        await self.session.commit()
-        return db_activities
+    async def save_activities(
+        self, db: AsyncSession, activities: list["Activity"]
+    ) -> list["Activity"]:
+        if not activities:
+            return []
+
+        now = datetime.now(tz=timezone.utc)
+        activity_dicts = []
+        activity_ids = []
+        for activity in activities:
+            if not hasattr(activity, "last_synced") or activity.last_synced is None:
+                activity.last_synced = now
+            data = activity.__dict__.copy()
+            data.pop("_sa_instance_state", None)
+            activity_dicts.append(data)
+            activity_ids.append(activity.id)
+
+        try:
+            stmt = insert(Activity).values(activity_dicts)
+            stmt = stmt.on_conflict_do_nothing(index_elements=["id"])
+            await db.execute(stmt)
+            await db.commit()
+        except SQLAlchemyError as e:
+            await db.rollback()
+            # Optionally log the error if you have a logger in scope
+            if hasattr(self, "logger") and self.logger:
+                self.logger.error(f"Error inserting activities: {e}")
+            raise  # re-raise so caller knows insert failed
+
+        try:
+            result = await db.execute(
+                sa.select(Activity).where(Activity.id.in_(activity_ids))
+            )
+            saved_activities = result.scalars().all()
+        except SQLAlchemyError as e:
+            if hasattr(self, "logger") and self.logger:
+                self.logger.error(f"Error querying inserted activities: {e}")
+            raise
+
+        return saved_activities
 
     async def update(
         self, activity_id: str, activity: ActivityUpdate
@@ -60,20 +99,3 @@ class ActivityRepository:
         await self.session.execute(delete(Activity).where(Activity.id == activity_id))
         await self.session.commit()
         return True
-
-    async def regenerate_from_source(self, external_source_id: str) -> List[Activity]:
-        """Regenerate activities from external source (e.g., Wealthsimple API)"""
-        # 1. Fetch fresh data from external source
-        # external_activities = await ExternalAPIService.get_activities(external_source_id)
-
-        # 2. Clear existing data
-        await self.session.execute(delete(Activity))
-
-        # 3. Persist new data
-        # activities = [Activity(**a.dict()) for a in external_activities]
-        # self.session.add_all(activities)
-        # await self.session.commit()
-        # return activities
-
-        # Placeholder until external service implementation
-        return []

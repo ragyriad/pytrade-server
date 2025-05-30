@@ -1,6 +1,7 @@
 import yaml, time
-from datetime import datetime
 from pathlib import Path
+from datetime import datetime, timezone
+from typing import Union
 
 
 def yaml_file_exists(filepath: str) -> bool:
@@ -31,8 +32,26 @@ def write_file(file_path: str, new_file_content: dict):
         yaml.dump(new_file_content, file)
 
 
+def utc_now():
+    return datetime.now(timezone.utc)
+
+
 def format_file_name():
     now = datetime.now()
     timestamp = now.strftime("%H:%M:%S").split(":")
     seconds = sum(int(x) * 60**i for i, x in enumerate(reversed(timestamp)))
     return f"{now.strftime('%Y-%m-%d')}_{seconds}_questrade_activities.txt"
+
+
+def to_utc_datetime(v: Union[str, datetime]) -> datetime:
+    if isinstance(v, str):
+        dt = datetime.fromisoformat(v)
+    elif isinstance(v, datetime):
+        dt = v
+    else:
+        raise ValueError(f"Cannot parse {v!r} as datetime")
+
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+
+    return dt.astimezone(timezone.utc)

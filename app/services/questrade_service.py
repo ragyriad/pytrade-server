@@ -5,22 +5,19 @@ from fastapi import HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from qtrade import Questrade
 
-from app.database.models import Account, Activity, Security
-from app.repositories.base_repository import BaseRepository
+from app.database.models import Activity, Security
+from app.schemas.activity import ActivityCreate
+from app.schemas.security import SecurityCreate
 from app.repositories.account_respository import AccountRepository
-from app.schemas.settings import settings
+from app.repositories.security_repository import SecurityRepository
+from app.repositories.activity_repository import ActivityRepository
+from config.settings import settings
 from app.utils.utils import (
     open_file,
     write_file,
     generate_expiry_timestamp,
     yaml_file_exists,
-)
-from app.data.constants import (
-    SECURITY_UPDATE_FIELDS,
-    SECURITY_UNIQUE_FIELD,
-    ACTIVITY_UNIQUE_FIELD,
-    ACTIVITY_UPDATE_FIELDS,
-    QUESTRADE_ACTIVITY_TYPE_DICT,
+    utc_now,
 )
 
 
@@ -29,10 +26,18 @@ file_path = (base_path / "brokers/questrade.yaml").resolve()
 
 
 class QuestradeService:
-    def __init__(self, account_repo: AccountRepository = None, logger=None):
+    def __init__(
+        self,
+        account_repo: AccountRepository = None,
+        activity_repo: ActivityRepository = None,
+        security_repo: SecurityRepository = None,
+        logger=None,
+    ):
         self.logger = logger
         self._client = None
         self.account_repo = account_repo
+        self.activity_repo = activity_repo
+        self.security_repo = security_repo
 
     def is_token_valid(self, expires_at: int, buffer_seconds: int = 60) -> bool:
         current_time = int(time.time())
@@ -202,13 +207,11 @@ class QuestradeService:
 
     @refresh_token_if_unauthorized
     async def sync_activities(self, db: AsyncSession):
-        """Fetch and sync Questrade activities."""
         try:
             self.authenticate()
-            fetched_accounts = (
-                db.query(Account)
-                .filter(Account.account_number.in_(["51978003", "51983522"]))
-                .all()
+
+            fetched_accounts = await self.account_repo.get_accounts_by_broker_name(
+                db=db, broker_name="Questrade"
             )
 
             activities_to_save = []
@@ -216,28 +219,25 @@ class QuestradeService:
             security_ids = set()
 
             for account in fetched_accounts:
-                account_number = account.account_number
-                print(f"\nUpdating {account.type} Account# {account_number}\n")
+                account_number = str(account.account_number)
 
-                for year in range(2019, 2024):
+                for year in range(2019, 2025):
                     for month in range(1, 13):
                         last_day = calendar.monthrange(year, month)[1]
-                        start_time = datetime(year, month, 1, tzinfo=timezone.utc)
-                        end_time = datetime(year, month, last_day, tzinfo=timezone.utc)
-
-                        print(
-                            f"{account.type} Account# {account_number} Request Period {start_time.date()} - {end_time.date()}"
+                        start_time = datetime(
+                            year, month, 1, tzinfo=settings.QUESTRADE_TIMEZONE
+                        )
+                        end_time = datetime(
+                            year, month, last_day, tzinfo=settings.QUESTRADE_TIMEZONE
                         )
 
-                        response = self._client.account_activities(
-                            account_number, startTime=start_time, endTime=end_time
+                        acitivities = self._client.get_account_activities(
+                            account_number, start_date=start_time, end_date=end_time
                         )
-                        activities = response["activities"]
 
-                        print(f"Found {len(activities)} activities")
                         options_pattern = r"^.*\d{1,2}[A-Za-z]{3}\d{2}P\d{1,}\.\d{2}$"
 
-                        for activity in activities:
+                        for activity in acitivities:
                             is_option = bool(
                                 re.match(options_pattern, activity["symbol"])
                             )
@@ -256,60 +256,82 @@ class QuestradeService:
                                 and "symbolId" in activity
                                 and activity["symbolId"] not in security_ids
                             ):
+                                security_data = SecurityCreate(
+                                    id=str(activity["symbolId"]),
+                                    symbol=activity["symbol"],
+                                    name=activity.get("name"),
+                                    description=activity.get("description", None),
+                                    option_details=activity.get("option_details", None),
+                                    order_subtypes=activity.get("order_subtypes", None),
+                                    type="Option" if is_option else "Equity",
+                                    currency=activity["currency"],
+                                    status=activity.get("status", None),
+                                    exchange=activity.get("exchange", None),
+                                    trade_eligible=activity.get(
+                                        "trade_eligible", False
+                                    ),
+                                    options_eligible=activity.get(
+                                        "options_eligible", False
+                                    ),
+                                    buyable=activity.get("buyable", False),
+                                    sellable=activity.get("sellable", False),
+                                    active_date=activity.get("active_date"),
+                                    created_at=activity.get("created_at") or utc_now(),
+                                    last_synced=activity.get("last_synced")
+                                    or utc_now(),
+                                )
                                 securities_to_save.append(
-                                    Security(
-                                        id=activity["symbolId"],
-                                        currency=activity["currency"],
-                                        symbol=activity["symbol"],
-                                        type="Option" if is_option else "Equity",
-                                    )
+                                    Security(**security_data.model_dump())
                                 )
                                 security_ids.add(activity["symbolId"])
-
-                            activities_to_save.append(
-                                Activity(
+                                print("ACITIVITY ", activity)
+                                activity_type = (
+                                    settings.QUESTRADE_ACTIVITY_TYPE_DICT.get(
+                                        activity_type, None
+                                    )
+                                )
+                                activity_data = ActivityCreate(
                                     id=activity.get("id", uuid.uuid4().hex),
                                     currency=activity["currency"],
-                                    type=QUESTRADE_ACTIVITY_TYPE_DICT.get(
-                                        activity_type, "Unknown"
+                                    type=activity_type,
+                                    status=(
+                                        "Filled"
+                                        if (
+                                            activity_type == "Order"
+                                            or activity_type == "Deposit"
+                                        )
+                                        else activity.get("status")
                                     ),
                                     action=self.get_activity_action(activity),
                                     price=activity.get("price"),
                                     quantity=activity.get("quantity"),
-                                    amount=activity.get("netAmount"),
+                                    amount=abs(activity.get("netAmount")),
                                     commission=activity.get("commission"),
                                     symbol=activity.get("symbol"),
-                                    submitted_at=activity.get("settlementDate"),
-                                    filled_at=activity.get("tradeDate"),
+                                    submitted_at=activity.get("tradeDate"),
+                                    filled_at=activity.get("settlementDate"),
                                     security_id=(
-                                        activity.get("symbolId")
+                                        str(activity.get("symbolId"))
                                         if activity["type"] == "Trades"
                                         else None
                                     ),
                                     account_id=account_number,
                                 )
-                            )
-            security_repo = BaseRepository(db, Security)
-            activity_repo = BaseRepository(db, Activity)
-            # Bulk insert securities and activities
-            security_repo.safe_bulk_create(
-                db,
-                Security,
-                securities_to_save,
-                SECURITY_UNIQUE_FIELD,
-                SECURITY_UPDATE_FIELDS,
-            )
-            activity_repo.safe_bulk_create(
-                db,
-                Activity,
-                activities_to_save,
-                ACTIVITY_UNIQUE_FIELD,
-                ACTIVITY_UPDATE_FIELDS,
-            )
+                                activities_to_save.append(
+                                    Activity(**activity_data.model_dump())
+                                )
 
+            saved_securities = await self.security_repo.save_securities(
+                db, securities_to_save
+            )
+            print("Securities Count:", len(saved_securities))
+            saved_activities = await self.activity_repo.save_activities(
+                db, activities_to_save
+            )
+            print("Activities Count:", len(saved_activities))
             return {
-                "security_count": len(securities_to_save),
-                "activity_count": len(activities_to_save),
+                "security_count": len(saved_securities),
+                "activity_count": len(saved_activities),
             }
 
         except Exception as e:

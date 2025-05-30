@@ -1,39 +1,47 @@
 from typing import List, Optional
-from datetime import datetime
+from datetime import datetime, timezone
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy import update, delete
+from sqlalchemy.orm import selectinload
 
-from app.database.models import Account
+from app.database.models import Account, Broker
 from app.repositories.broker_repository import BrokerRepository
 
 
 class AccountRepository:
     def __init__(self, logger=None):
-        """
-        Initialize with optional logger dependency.
-        Can be extended with other dependencies like cache, metrics, etc.
-        """
         self.logger = logger
 
     @staticmethod
     async def get_all_accounts(db: AsyncSession) -> List[Account]:
-        """Get all accounts from the database"""
         result = await db.execute(select(Account))
         return result.scalars().all()
 
     @staticmethod
     async def get_account_by_id(db: AsyncSession, account_id: str) -> Optional[Account]:
-        """Get single account by account_number"""
         result = await db.execute(
             select(Account).filter(Account.account_number == account_id)
         )
         return result.scalars().first()
 
+    @staticmethod
+    async def get_accounts_by_broker_name(
+        db: AsyncSession, broker_name: str
+    ) -> List[Account]:
+        stmt = (
+            select(Account)
+            .join(Account.account_broker)
+            .filter(Broker.name == broker_name)
+            .options(selectinload(Account.account_broker))
+        )
+        result = await db.execute(stmt)
+        return result.scalars().all()
+
     async def save_accounts(
         self, db: AsyncSession, accounts_data: List[dict], broker: str = None
-    ) -> List[Account]:
-        """Bulk insert accounts with validation"""
+    ) -> List["Account"]:
         if not accounts_data:
             if self.logger:
                 self.logger.warning("Empty accounts_data provided to save_accounts")
@@ -44,7 +52,8 @@ class AccountRepository:
             broker_obj = await BrokerRepository.get_broker_by_name(db, broker)
             if not broker_obj:
                 raise ValueError(f"Broker with name '{broker}' not found")
-            print("Broker found:", broker_obj.name)
+            if self.logger:
+                self.logger.info(f"Broker found: {broker_obj.name}")
             fetched_account_broker_id = broker_obj.id
 
         account_objs = []
@@ -57,14 +66,20 @@ class AccountRepository:
                 account_number=acc.get("number"),
                 status=acc.get("status"),
                 is_primary=acc.get("isPrimary", False),
-                last_synced=datetime.utcnow(),
+                last_synced=datetime.now(tz=timezone.utc),
                 currency=acc.get("currency"),
                 account_broker_id=fetched_account_broker_id,
             )
             account_objs.append(account)
 
-        db.add_all(account_objs)
-        await db.commit()
+        try:
+            db.add_all(account_objs)
+            await db.commit()
+        except SQLAlchemyError as e:
+            await db.rollback()
+            if self.logger:
+                self.logger.error(f"Error saving accounts: {e}")
+            raise
 
         for account in account_objs:
             await db.refresh(account)
@@ -97,26 +112,3 @@ class AccountRepository:
         )
         await db.commit()
         return result.rowcount > 0
-
-    async def get_accounts_by_status(
-        self, db: AsyncSession, status: str
-    ) -> List[Account]:
-        """Get accounts filtered by status"""
-        result = await db.execute(select(Account).filter(Account.status == status))
-        return result.scalars().all()
-
-    async def get_primary_account(
-        self, db: AsyncSession, user_id: str
-    ) -> Optional[Account]:
-        """Get a user's primary account"""
-        result = await db.execute(
-            select(Account).filter(
-                Account.user_id == user_id, Account.is_primary == True
-            )
-        )
-        return result.scalars().first()
-
-
-def get_account_repository(logger=None) -> AccountRepository:
-    """Dependency injection factory"""
-    return AccountRepository(logger=logger)
