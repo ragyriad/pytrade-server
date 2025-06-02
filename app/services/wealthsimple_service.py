@@ -8,7 +8,7 @@ from app.schemas.schemas import SecurityCreate
 from app.database.models import Activity, Security
 from app.repositories.base_repository import BaseRepository
 from app.services.session_manager import load_session, persist_session
-from app.data.constants import (
+from config.settings import (
     SECURITY_UNIQUE_FIELD,
     SECURITY_UPDATE_FIELDS,
     ACTIVITY_UPDATE_FIELDS,

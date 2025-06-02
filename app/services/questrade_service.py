@@ -3,7 +3,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from fastapi import HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
-from qtrade import Questrade
+from qtrade_rr import Questrade
 
 from app.database.models import Activity, Security
 from app.schemas.activity import ActivityCreate
