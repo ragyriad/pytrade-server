@@ -1,12 +1,10 @@
 from fastapi import APIRouter, Depends, HTTPException
-from typing import Optional
-import traceback, logging
-from starlette.requests import Request
+import logging
 from ws_api import OTPRequiredException, LoginFailedException
 
-from app.services.wealthsimple_service import WealthsimpleService, get_ws_service
+from app.services.wealthsimple_service import WealthsimpleService
 from app.services.questrade_service import QuestradeService
-from app.dependencies import get_questrade_service
+from app.dependencies import get_questrade_service, get_wealthsimple_service
 from app.schemas.auth import BrokerLoginRequest, BrokerLoginResponse
 
 router = APIRouter()
@@ -35,7 +33,7 @@ async def login_wealthsimple(credentials: BrokerLoginRequest):
 
 @router.post("/wealthsimple/refresh-token")
 async def refresh_wealthsimple_token(
-    service: WealthsimpleService = Depends(get_ws_service),
+    service: WealthsimpleService = Depends(get_wealthsimple_service),
 ):
     try:
         await service.refresh_tokens()

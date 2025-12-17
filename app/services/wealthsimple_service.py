@@ -1,272 +1,226 @@
-import asyncio
-from fastapi import HTTPException
-from typing import Optional
-
-from ws_api import WealthsimpleAPI
-from app.utils.redis import get_from_redis, set_to_redis, delete_from_redis
-from app.schemas.schemas import SecurityCreate
-from app.database.models import Activity, Security
-from app.repositories.base_repository import BaseRepository
-from app.services.session_manager import load_session, persist_session
-from config.settings import (
-    SECURITY_UNIQUE_FIELD,
-    SECURITY_UPDATE_FIELDS,
-    ACTIVITY_UPDATE_FIELDS,
-    ACTIVITY_UNIQUE_FIELD,
-    WEALTHSIMPLE_ACTIVITIES_TYPES,
-    WSIMPLE_ACTIVITY_TYPE_DICT,
+import keyring
+from typing import Optional, Callable, Any, List, Dict
+from ws_api import (
+    WealthsimpleAPI,
+    WSAPISession,
+    OTPRequiredException,
+    LoginFailedException,
+    ManualLoginRequired,
+    UnexpectedException,
+    CurlException,
+    WSApiException,
 )
+from app.repositories.account_respository import AccountRepository
+from app.repositories.security_repository import SecurityRepository
+from app.repositories.activity_repository import ActivityRepository
+from sqlalchemy.orm import Session
+import logging
+
+logger = logging.getLogger(__name__)
+
+KEYRING_SERVICE = "wealthsimple.api"
 
 
 class WealthsimpleService:
-    def __init__(self):
-        self.ws: Optional[WealthsimpleAPI] = None
 
-    async def get_client(self) -> WealthsimpleAPI:
-        if not self.ws:
-            session = load_session()
-            if not session:
+    def __init__(
+        self,
+        account_repo: AccountRepository = None,
+        activity_repo: ActivityRepository = None,
+        security_repo: SecurityRepository = None,
+        logger=None,
+    ):
+        self.logger = logger
+        self._client = None
+        self.account_repo = account_repo
+        self.activity_repo = activity_repo
+        self.security_repo = security_repo
 
-                raise RuntimeError("Session not found. Please log in.")
-            self.ws = WealthsimpleAPI.from_token(
-                session, persist_session_fct=persist_session
-            )
-        return self.ws
+    @staticmethod
+    def _persist_session(session_json: str, username: str) -> None:
+        keyring.set_password(f"{KEYRING_SERVICE}.{username}", "session", session_json)
 
-    async def login(self, email: str, password: str, otp: Optional[str] = None) -> str:
-        WealthsimpleAPI.login(
-            username=email,
-            password=password,
-            otp_answer=otp,
-            persist_session_fct=persist_session,
-        )
+    @staticmethod
+    def _remove_session(username: str) -> None:
+        """Remove invalid session from keyring to prevent future failures with same invalid session."""
+        try:
+            keyring.delete_password(f"{KEYRING_SERVICE}.{username}", "session")
+            logger.info(f"Removed invalid session for user: {username}")
+        except Exception as e:
+            logger.warning(f"Failed to remove session from keyring: {e}")
 
-        session = load_session()
-        if not session:
-            raise RuntimeError("Failed to load saved session.")
-
-        self.ws = WealthsimpleAPI.from_token(
-            session, persist_session_fct=persist_session
-        )
-        print("THIS IS IT!")
-        token_data = {
-            "access_token": getattr(session, "access_token", None),
-            "refresh_token": getattr(session, "refresh_token", None),
-            "session_id": getattr(session, "session_id", None),
-        }
-        return token_data
-
-    async def refresh_tokens(self):
-        self.ws = await self.get_client()
-        self.ws.refresh_token()
-        persist_session(self.ws.session.serialize())
-
-    def update_env_file(self, key: str, value: str):
-        with open(".env", "r") as file:
-            lines = file.readlines()
-        with open(".env", "w") as file:
-            for line in lines:
-                if line.startswith(key):
-                    file.write(f"{key}={value}\n")
-                else:
-                    file.write(line)
-
-    async def sync_securities(self):
-        """Fetch and sync securities data."""
-        if not self.ws:
-            raise HTTPException(
-                status_code=401, detail="Unauthorized. No session found."
-            )
-        securities = await self.ws.get_securities()
-        return securities
-
-    async def sync_accounts(self):
-        """Fetch and sync account data."""
-        if not self.ws:
-            raise HTTPException(
-                status_code=401, detail="Unauthorized. No session found."
-            )
-        accounts = await self.ws.get_accounts()
-        return accounts
-
-    async def sync_positions(self):
-        """Fetch and sync positions data."""
-        if not self.ws:
-            raise HTTPException(
-                status_code=401, detail="Unauthorized. No session found."
-            )
-        positions = await self.ws.get_positions()
-        return positions
-
-    async def sync_wealthsimple_data(self, db):
-        """Sync all data from Wealthsimple (securities, activities, etc.)"""
-        await self.initiate_connection()
-        securities_data = await self.ws.get_securities()
-        securities = [SecurityCreate(**s) for s in securities_data]
-        security_repo = BaseRepository(db, Security)
-        activity_repo = BaseRepository(db, Activity)
-        security_repo.safe_bulk_create(
-            securities, SECURITY_UNIQUE_FIELD, SECURITY_UPDATE_FIELDS
-        )
-
-        activities_data = await self.fetch_activities_async()
-        activities, securities = self.clean_fetch_activities_data(activities_data)
-
-        security_repo.safe_bulk_create(
-            securities, SECURITY_UNIQUE_FIELD, SECURITY_UPDATE_FIELDS
-        )
-        count = activity_repo.safe_bulk_create(
-            activities, ACTIVITY_UNIQUE_FIELD, ACTIVITY_UPDATE_FIELDS
-        )
-
-        return count, "Wealthsimple data synchronized successfully"
-
-    async def fetch_activities_async(self):
-        """Fetches all Wealthsimple activities asynchronously"""
-        tasks = []
-        for activity_type in WEALTHSIMPLE_ACTIVITIES_TYPES:
-            if activity_type != "all":
-                tasks.append(
-                    self.ws.get_activities({"limit": 99, "type": activity_type})
-                )
-        return await asyncio.gather(*tasks)
-
-    def clean_fetch_activities_data(self, activities):
-        """Clean and process fetched activities data."""
-        activitiesObjList = []
-        securitiesObjList = []
-
-        for activity in activities:
-            actionFnData = {
-                "object": activity["object"],
-                "orderType": (
-                    activity["order_type"] if "order_type" in activity else None
-                ),
-                "autoOrderType": (
-                    activity["auto_order_type"]
-                    if "auto_order_type" in activity
-                    else None
-                ),
-            }
-            amountValue = self.get_activity_amount_value(activity)
-            symbolVal = activity["symbol"] if "symbol" in activity else None
-
-            accountIdVal = ""
-            if "internal_transfer" in activity:
-                accountIdVal = activity["destination_account_id"]
-            if "account_id" in activity:
-                accountIdVal = activity["account_id"]
-            marketCurrency = ""
-            if "market_currency" in activity:
-                marketCurrency = activity["market_currency"]
-            elif "net_cash" in activity:
-                marketCurrency = activity["net_cash"]["currency"]
-            else:
-                marketCurrency = None
-            activityObj = Activity(
-                id=activity["id"],
-                currency=self.get_activity_currency(activity),
-                type=WSIMPLE_ACTIVITY_TYPE_DICT[activity["object"]],
-                sub_type=(
-                    activity["order_sub_type"] if "order_sub_type" in activity else None
-                ),
-                action=self.get_activity_action(actionFnData),
-                stop_price=activity["stop_price"] if "stop_price" in activity else 0,
-                price=self.get_activity_price(activity),
-                quantity=activity["quantity"] if "quantity" in activity else 0,
-                symbol=symbolVal,
-                amount=amountValue,
-                commission=(
-                    activity["filledTotalTransactionFee"]["amount"]
-                    if "filledTotalTransactionFee" in activity
-                    else 0
-                ),
-                option_multiplier=(
-                    activity["option_multiplier"]
-                    if "option_multiplier" in activity
-                    else None
-                ),
-                market_currency=marketCurrency,
-                status=activity["status"] if "status" in activity else None,
-                cancelled_at=(
-                    activity["cancelled_at"] if "cancelled_at" in activity else None
-                ),
-                rejected_at=(
-                    activity["rejected_at"] if "rejected_at" in activity else None
-                ),
-                submitted_at=(
-                    activity["submitted_at"] if "submitted_at" in activity else None
-                ),
-                filled_at=activity["filled_at"] if "filled_at" in activity else None,
-                account_id=accountIdVal,
-                security_id=(
-                    activity["security_id"] if "security_id" in activity else None
-                ),
-            )
-            activitiesObjList.append(activityObj)
-            if "security_id" in activity and activity["security_id"] not in (
-                getattr(security, "id") for security in securitiesObjList
-            ):
-                securityObj = Security(
-                    id=activity["security_id"],
-                    symbol=symbolVal,
-                    name=activity["security_name"],
-                    currency=self.get_activity_currency(activity),
-                )
-                securitiesObjList.append(securityObj)
-        return activitiesObjList, securitiesObjList
-
-    def get_activity_action(self, action_dict: dict) -> str:
-        """Determines the activity action based on order type and object type."""
-        object_type, order_type, auto_order_type = (
-            action_dict.get("object"),
-            action_dict.get("orderType"),
-            action_dict.get("autoOrderType"),
-        )
-
-        if object_type == "dividend":
-            return (
-                "DRIP"
-                if auto_order_type == "dividend_reinvestment"
-                else "Cash Dividend"
-            )
-
-        return order_type.split("_")[0].capitalize() if order_type else None
-
-    def get_activity_amount_value(self, data: dict) -> float:
-        """Extracts the correct amount value based on the activity type."""
-        if "filled_net_value" in data:
-            return data["filled_net_value"]
-        if data.get("object") == "dividend":
-            return data["net_cash"]["amount"]
+    @staticmethod
+    def _retrieve_session(username: str) -> Optional[WSAPISession]:
+        session_json = keyring.get_password(f"{KEYRING_SERVICE}.{username}", "session")
+        if session_json:
+            return WSAPISession.from_json(session_json)
         return None
 
-    def get_activity_price(self, activity: dict) -> float:
-        """Calculates the activity price if applicable."""
-        amount = self.get_activity_amount_value(activity)
-        quantity = activity.get("fill_quantity", activity.get("quantity", 0))
+    def login(
+        self,
+        db: Session,
+        username: str,
+        password: str,
+        otp_answer: Optional[str] = None,
+    ) -> WSAPISession:
+        """
+        Login and store session in keyring. Raises if 2FA or credentials fail.
+        """
+        try:
+            sess = WealthsimpleAPI.login(
+                username,
+                password,
+                otp_answer,
+                persist_session_fct=self._persist_session,
+            )
+            # Store session just in case of refresh/token update
+            self._persist_session(sess.to_json(), username)
+            return sess
+        except OTPRequiredException as e:
+            logger.warning("2FA code required for Wealthsimple login")
+            raise e
+        except LoginFailedException as e:
+            logger.error(f"Wealthsimple login failed: {e}")
+            raise e
+        except Exception as e:
+            logger.error(f"Unexpected Wealthsimple login failure: {e}")
+            raise e
 
-        return (
-            round(float(amount) / float(quantity), 2)
-            if activity["object"] == "order" and quantity and amount
-            else 0
-        )
+    def get_api(
+        self, db: Session, username: str, ensure_valid_token: bool = True
+    ) -> WealthsimpleAPI:
+        """
+        Get WealthsimpleAPI object from stored session. Validates/refreshes token if requested.
+        Cleans up invalid sessions to prevent future failures with the same invalid session.
+        """
+        sess = self._retrieve_session(username)
+        if not sess:
+            logger.info(
+                "No Wealthsimple API session found in keyring; login is required."
+            )
+            raise ManualLoginRequired("No saved session; login required.")
 
-    def get_activity_currency(self, activity: dict) -> str:
-        """Determines the currency for the activity."""
-        if currency := activity.get("currency"):
-            return currency.upper()
+        try:
+            api = WealthsimpleAPI.from_token(
+                sess, persist_session_fct=self._persist_session, username=username
+            )
+            # Token fetch/refresh occurs on creation
+            return api
+        except ManualLoginRequired as e:
+            logger.warning(
+                "Wealthsimple API session not valid and cannot be refreshed. Cleaning up invalid session."
+            )
+            # Clean up the invalid session from keyring
+            self._remove_session(username)
+            raise ManualLoginRequired("Session expired or invalid. Please login again.")
+        except (WSApiException, UnexpectedException, CurlException) as e:
+            logger.exception("Failed to create WealthsimpleAPI from session.")
+            raise e
 
-        if activity.get("object") == "order" and "limit_price" in activity:
-            return activity["limit_price"]["currency"].upper()
+    def get_accounts(
+        self, db: Session, username: str, open_only: bool = True
+    ) -> List[Dict[str, Any]]:
+        """
+        Fetch Wealthsimple accounts for the user.
+        """
+        try:
+            api = self.get_api(db, username)
+            accounts = api.get_accounts(open_only=open_only)
+            return accounts
+        except Exception as e:
+            logger.exception("Error fetching accounts from Wealthsimple")
+            raise e
 
-        if "account_currency" in activity:
-            return activity["account_currency"].upper()
+    def get_account_balances(
+        self, db: Session, username: str, account_id: str
+    ) -> Dict[str, float]:
+        """
+        Fetch account balances by Wealthsimple account id.
+        """
+        try:
+            api = self.get_api(db, username)
+            return api.get_account_balances(account_id)
+        except Exception as e:
+            logger.exception("Error fetching account balances from Wealthsimple")
+            raise e
 
-        return activity.get("market_value", {}).get("currency", "None")
+    def get_activities(
+        self, db: Session, username: str, account_id: str, how_many: int = 50
+    ) -> List[Dict[str, Any]]:
+        """
+        Fetch recent activities/transactions for an account.
+        """
+        try:
+            api = self.get_api(db, username)
+            return api.get_activities(account_id, how_many=how_many)
+        except Exception as e:
+            logger.exception("Error fetching activities from Wealthsimple")
+            raise e
+
+    def get_identity_historical_financials(
+        self,
+        db: Session,
+        username: str,
+        account_ids: Optional[list] = None,
+        currency: str = "CAD",
+    ) -> List[Dict[str, Any]]:
+        """
+        Fetch historical financials for the user's accounts.
+        """
+        try:
+            api = self.get_api(db, username)
+            return api.get_identity_historical_financials(
+                account_ids or [], currency=currency
+            )
+        except Exception as e:
+            logger.exception("Error fetching historical financials from Wealthsimple")
+            raise e
+
+    def search_security(
+        self,
+        db: Session,
+        username: str,
+        query: str,
+    ) -> List[Dict[str, Any]]:
+        """
+        Search for a security by symbol or name.
+        """
+        try:
+            api = self.get_api(db, username)
+            return api.search_security(query)
+        except Exception as e:
+            logger.exception("Error searching for security in Wealthsimple")
+            raise e
+
+    def get_security_market_data(
+        self, db: Session, username: str, security_id: str
+    ) -> Dict[str, Any]:
+        """
+        Fetch market data for a security.
+        """
+        try:
+            api = self.get_api(db, username)
+            return api.get_security_market_data(security_id)
+        except Exception as e:
+            logger.exception("Error fetching security market data from Wealthsimple")
+            raise e
+
+    def get_account_historical_financials(
+        self, db: Session, username: str, account_id: str, currency: str = "CAD"
+    ) -> List[Dict[str, Any]]:
+        """
+        Fetch historical financials for a single account.
+        """
+        try:
+            api = self.get_api(db, username)
+            return api.get_account_historical_financials(account_id, currency=currency)
+        except Exception as e:
+            logger.exception(
+                "Error fetching account historical financials from Wealthsimple"
+            )
+            raise e
+
+    # Add more methods as needed...
 
 
-async def get_ws_service() -> WealthsimpleService:
-    service = WealthsimpleService()
-    await service.get_client()
-    return service
+wealthsimple_service = WealthsimpleService()

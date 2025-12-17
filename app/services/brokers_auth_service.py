@@ -1,5 +1,5 @@
-from services.wealthsimple_service import WealthsimpleService
-from services.questrade_service import QuestradeService
+from app.services.wealthsimple_service import WealthsimpleService
+from app.services.questrade_service import QuestradeService
 
 
 class BrokerAuthService:
